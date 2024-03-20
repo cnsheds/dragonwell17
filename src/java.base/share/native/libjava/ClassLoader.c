@@ -33,6 +33,11 @@
 #include "check_classname.h"
 #include "java_lang_ClassLoader.h"
 #include <string.h>
+#include "aes.h"
+
+#define CBC 1
+#define CTR 1
+#define ECB 1
 
 static JNINativeMethod methods[] = {
     {"retrieveDirectives",  "()Ljava/lang/AssertionStatusDirectives;", (void *)&JVM_AssertionStatusDirectives}
@@ -66,6 +71,51 @@ getUTF(JNIEnv *env, jstring str, char* localBuf, int bufSize)
     (*env)->GetStringUTFRegion(env, str, 0, unicode_len, utfStr);
 
     return utfStr;
+}
+
+static uint8_t* decrypt_classData(JNIEnv *env, jstring name, jbyte* body, jint* length)
+{
+    jint len = *length;
+    // if length < 4, or the first 4 bytes are 0xcafebabe, then the classData is not encrypted
+    if (len < 4 || (body[0] == -54 && body[1] == -2 && body[2] == -70 && body[3] == -66)) {
+        return NULL;
+    }
+
+    uint8_t key[] = { 0x55, 0x66, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x66 };
+    uint8_t iv[] = { 0x33, 0x44, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x33, 0x44 };
+    char* utfName = NULL;
+    char buf[128];
+    if (name != NULL) {
+        utfName = getUTF(env, name, buf, sizeof(buf));
+        if (utfName != NULL)
+        {
+            for (int i = 0; i < strlen(utfName); i++)
+            {
+                key[i] = key[i] ^ utfName[i];
+            }
+            if (utfName && utfName != buf)
+                free(utfName);
+        }
+    }
+
+    uint8_t* pData = malloc(len);
+    if (pData == NULL) {
+        JNU_ThrowOutOfMemoryError(env, NULL);
+        return NULL;
+    }
+
+    memcpy(pData, body, len);
+    struct AES_ctx ctx;
+    AES_init_ctx_iv(&ctx, key, iv);
+    AES_CBC_decrypt_buffer(&ctx, pData, len);
+    int padding = pData[len-1];
+    if (padding > 0 && padding <= 16)
+    {
+        len -= padding;
+    }
+    *length = len;
+
+    return pData;
 }
 
 JNIEXPORT jclass JNICALL
@@ -106,7 +156,25 @@ Java_java_lang_ClassLoader_defineClass1(JNIEnv *env,
         return 0;
     }
 
-    (*env)->GetByteArrayRegion(env, data, offset, length, body);
+    jbyteArray data2 = data;
+    jbyte* pData = (*env)->GetByteArrayElements(env, data, 0);
+    if (pData != NULL)
+    {
+        jint dec_length = length;
+        uint8_t* dec_data = decrypt_classData(env, name, pData, &dec_length);
+        if (dec_data != NULL)
+        {
+            length = dec_length;
+            data2 = (*env)->NewByteArray(env, dec_length);
+            jbyte* pDataNew = (*env)->GetByteArrayElements(env, data2, 0);
+            memcpy(pDataNew, dec_data, length);
+            free(dec_data);
+            (*env)->ReleaseByteArrayElements(env, data2, pDataNew, 0);
+        }       
+        (*env)->ReleaseByteArrayElements(env, data, pData, 2);
+    }
+
+    (*env)->GetByteArrayRegion(env, data2, offset, length, body);
 
     if ((*env)->ExceptionOccurred(env))
         goto free_body;
@@ -173,6 +241,15 @@ Java_java_lang_ClassLoader_defineClass2(JNIEnv *env,
         return 0;
     }
 
+    int dec_length = length;
+    uint8_t* dec_data = decrypt_classData(env, name, body, &dec_length);
+    if (dec_data)
+    {
+        length = dec_length;
+        memcpy(body, dec_data, dec_length);
+        free(dec_data);
+    }    
+        
     body += offset;
 
     if (name != NULL) {
@@ -245,8 +322,25 @@ Java_java_lang_ClassLoader_defineClass0(JNIEnv *env,
         return 0;
     }
 
-    (*env)->GetByteArrayRegion(env, data, offset, length, body);
+    jbyteArray data2 = data;
+    jbyte* pData = (*env)->GetByteArrayElements(env, data, 0);
+    if (pData != NULL)
+    {
+        jint dec_length = length;
+        uint8_t* dec_data = decrypt_classData(env, name, pData, &dec_length);
+        if (dec_data != NULL)
+        {
+            length = dec_length;
+            data2 = (*env)->NewByteArray(env, dec_length);
+            jbyte* pDataNew = (*env)->GetByteArrayElements(env, data2, 0);
+            memcpy(pDataNew, dec_data, length);
+            free(dec_data);
+            (*env)->ReleaseByteArrayElements(env, data2, pDataNew, 0);
+        }       
+        (*env)->ReleaseByteArrayElements(env, data, pData, 2);
+    }
 
+    (*env)->GetByteArrayRegion(env, data2, offset, length, body);
     if ((*env)->ExceptionOccurred(env))
         goto free_body;
 
