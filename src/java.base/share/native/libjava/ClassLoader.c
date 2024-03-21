@@ -73,23 +73,48 @@ getUTF(JNIEnv *env, jstring str, char* localBuf, int bufSize)
     return utfStr;
 }
 
-static uint8_t* decrypt_classData(JNIEnv *env, jstring name, jbyte* body, jint* length)
+static int is_enc_class(jbyte* body, jint len)
 {
-    jint len = *length;
     // if length < 4, or the first 4 bytes are 0xcafebabe, then the classData is not encrypted
     if (len < 4 || (body[0] == -54 && body[1] == -2 && body[2] == -70 && body[3] == -66)) {
+        return 0;
+    }
+
+    return 1;
+}
+
+void reverseString(char *str) {
+    int length = strlen(str);
+    int i, j;
+    char temp;
+    
+    for (i = 0, j = length - 1; i < j; i++, j--) {
+        temp = str[i];
+        str[i] = str[j];
+        str[j] = temp;
+    }
+}
+
+static uint8_t* decrypt_classData(JNIEnv *env, jstring name, jbyte* body, jint offset, jint* length)
+{
+    jint len = *length;
+    if (is_enc_class(body, len) == 0) {
         return NULL;
     }
 
-    uint8_t key[] = { 0x55, 0x66, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x66 };
-    uint8_t iv[] = { 0x33, 0x44, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x33, 0x44 };
+    uint8_t key[32] = { 0x55, 0x66, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 
+                        0x55, 0x66, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x66 };
+    uint8_t iv[16] =  { 0x33, 0x44, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x33, 0x44 };
     char* utfName = NULL;
     char buf[128];
     if (name != NULL) {
         utfName = getUTF(env, name, buf, sizeof(buf));
         if (utfName != NULL)
         {
-            for (size_t i = 0; i < strlen(utfName); i++)
+            reverseString(utfName);
+            size_t maxlen = strlen(utfName);
+            if (maxlen > sizeof(key)) maxlen = sizeof(key);
+            for (size_t i = 0; i < maxlen; i++)
             {
                 key[i] = key[i] ^ utfName[i];
             }
@@ -161,13 +186,13 @@ Java_java_lang_ClassLoader_defineClass1(JNIEnv *env,
     if (pData != NULL)
     {
         jint dec_length = length;
-        uint8_t* dec_data = decrypt_classData(env, name, pData, &dec_length);
+        uint8_t* dec_data = decrypt_classData(env, name, pData, offset, &dec_length);
         if (dec_data != NULL)
         {
             length = dec_length;
             data2 = (*env)->NewByteArray(env, dec_length);
             jbyte* pDataNew = (*env)->GetByteArrayElements(env, data2, 0);
-            memcpy(pDataNew, dec_data, length);
+            memcpy(pDataNew, dec_data, dec_length);
             free(dec_data);
             (*env)->ReleaseByteArrayElements(env, data2, pDataNew, 0);
         }       
@@ -242,7 +267,7 @@ Java_java_lang_ClassLoader_defineClass2(JNIEnv *env,
     }
 
     int dec_length = length;
-    uint8_t* dec_data = decrypt_classData(env, name, body, &dec_length);
+    uint8_t* dec_data = decrypt_classData(env, name, body, offset, &dec_length);
     if (dec_data)
     {
         length = dec_length;
@@ -327,13 +352,13 @@ Java_java_lang_ClassLoader_defineClass0(JNIEnv *env,
     if (pData != NULL)
     {
         jint dec_length = length;
-        uint8_t* dec_data = decrypt_classData(env, name, pData, &dec_length);
+        uint8_t* dec_data = decrypt_classData(env, name, pData, offset, &dec_length);
         if (dec_data != NULL)
         {
             length = dec_length;
             data2 = (*env)->NewByteArray(env, dec_length);
             jbyte* pDataNew = (*env)->GetByteArrayElements(env, data2, 0);
-            memcpy(pDataNew, dec_data, length);
+            memcpy(pDataNew, dec_data, dec_length);
             free(dec_data);
             (*env)->ReleaseByteArrayElements(env, data2, pDataNew, 0);
         }       
