@@ -89,7 +89,7 @@ static uint8_t* decrypt_classData(JNIEnv *env, jstring name, jbyte* body, jint* 
         utfName = getUTF(env, name, buf, sizeof(buf));
         if (utfName != NULL)
         {
-            for (int i = 0; i < strlen(utfName); i++)
+            for (size_t i = 0; i < strlen(utfName); i++)
             {
                 key[i] = key[i] ^ utfName[i];
             }
