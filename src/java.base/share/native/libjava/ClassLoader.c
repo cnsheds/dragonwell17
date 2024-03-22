@@ -84,8 +84,8 @@ static int is_enc_class(jbyte* body, jint len)
 }
 
 void reverseString(char *str) {
-    int length = strlen(str);
-    int i, j;
+    size_t length = strlen(str);
+    size_t i, j;
     char temp;
     
     for (i = 0, j = length - 1; i < j; i++, j--) {
